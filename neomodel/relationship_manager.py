@@ -168,6 +168,9 @@ class RelationshipManager(object):
     def exclude(self, **kwargs):
         return NodeSet(self._new_traversal()).exclude(**kwargs)
 
+    def order_by(self, *props):
+        return NodeSet(self._new_traversal()).order_by(*props)
+
     @check_source
     def is_connected(self, obj):
         return self._new_traversal().__contains__(obj)
