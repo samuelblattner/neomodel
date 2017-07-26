@@ -8,7 +8,7 @@ from threading import local
 from .exception import UniqueProperty, ConstraintValidationFailed
 from . import config
 
-from neo4j.v1 import GraphDatabase, basic_auth, exceptions as neo4j_exc
+from neo4j.v1 import GraphDatabase, basic_auth, CypherError
 
 
 if sys.version_info >= (3, 0):
@@ -27,6 +27,14 @@ def ensure_connection(func):
             self.set_connection(config.DATABASE_URL)
         return func(self, *args, **kwargs)
     return wrapper
+
+
+def change_neo4j_password(db, new_password):
+    db.cypher_query("CALL dbms.changePassword({password})", {'password': new_password})
+
+
+def clear_neo4j_database(db):
+    db.cypher_query("MATCH (a) DETACH DELETE a")
 
 
 class Database(local):
@@ -48,15 +56,9 @@ class Database(local):
                              " got {}".format(url))
 
         self.driver = GraphDatabase.driver('bolt://' + hostname,
-                                           auth=basic_auth(username, password))
-        self.refresh_connection()
-
-    @ensure_connection
-    def refresh_connection(self):
-        if self._active_transaction:
-            raise SystemError("Can't refresh connection with active transaction")
-
-        self._session = self.driver.session()
+                                           auth=basic_auth(username, password),
+                                           encrypted=config.ENCRYPTED_CONNECTION,
+                                           max_pool_size=config.MAX_POOL_SIZE)
         self._pid = os.getpid()
         self._active_transaction = None
 
@@ -69,7 +71,7 @@ class Database(local):
     def begin(self):
         if self._active_transaction:
             raise SystemError("Transaction in progress")
-        self._active_transaction = self._session.begin_transaction()
+        self._active_transaction = self.driver.session().begin_transaction()
 
     @ensure_connection
     def commit(self):
@@ -85,19 +87,19 @@ class Database(local):
     @ensure_connection
     def cypher_query(self, query, params=None, handle_unique=True):
         if self._pid != os.getpid():
-            self.refresh_connection()
+            self.set_connection(self.url)
 
         if self._active_transaction:
             session = self._active_transaction
         else:
-            session = self._session
+            session = self.driver.session()
 
         try:
             start = time.clock()
             response = session.run(query, params)
             results, meta = [list(r.values()) for r in response], response.keys()
             end = time.clock()
-        except neo4j_exc.CypherError as ce:
+        except CypherError as ce:
             if ce.code == u'Neo.ClientError.Schema.ConstraintValidationFailed':
                 if 'already exists with label' in ce.message and handle_unique:
                     raise UniqueProperty(ce.message)
@@ -129,7 +131,7 @@ class TransactionProxy(object):
         if exc_value:
             self.db.rollback()
 
-        if exc_type is neo4j_exc.CypherError:
+        if exc_type is CypherError:
             if exc_value.code == u'Neo.ClientError.Schema.ConstraintValidationFailed':
                 raise UniqueProperty(exc_value.message)
 
@@ -164,3 +166,12 @@ def classproperty(f):
         def __get__(self, obj, type=None):
             return self.getter(type)
     return cpf(f)
+
+
+# Just used for error messages
+class _UnsavedNode(object):
+    def __repr__(self):
+        return '<unsaved node>'
+
+    def __str__(self):
+        return self.__repr__()

@@ -13,13 +13,13 @@ class SupplierRel(StructuredRel):
 class Supplier(StructuredNode):
     name = StringProperty()
     delivery_cost = IntegerProperty()
-    coffees = RelationshipTo('Coffee', 'SUPPLIES')
+    coffees = RelationshipTo('Coffee', 'COFFEE SUPPLIERS')  # Space to check for escaping
 
 
 class Coffee(StructuredNode):
     name = StringProperty(unique_index=True)
     price = IntegerProperty()
-    suppliers = RelationshipFrom(Supplier, 'SUPPLIES', model=SupplierRel)
+    suppliers = RelationshipFrom(Supplier, 'COFFEE SUPPLIERS', model=SupplierRel)
 
 
 def test_filter_exclude_via_labels():
@@ -56,7 +56,7 @@ def test_simple_has_via_label():
     ns = NodeSet(Coffee).has(suppliers=True)
     qb = QueryBuilder(ns).build_ast()
     results = qb._execute()
-    assert 'SUPPLIES' in qb._ast['where'][0]
+    assert 'COFFEE SUPPLIERS' in qb._ast['where'][0]
     assert len(results) == 1
     assert results[0].name == 'Nescafe'
 
@@ -98,7 +98,7 @@ def test_simple_traverse_with_filter():
 
     results = qb.build_ast()._execute()
 
-    assert 'start' in qb._ast
+    assert 'lookup' in qb._ast
     assert 'match' in qb._ast
     assert qb._ast['return'] == 'suppliers'
     assert len(results) == 1
@@ -196,9 +196,9 @@ def test_order_by():
     for c in Coffee.nodes:
         c.delete()
 
-    Coffee(name="Icelands finest", price=5).save()
-    Coffee(name="Britains finest", price=10).save()
-    Coffee(name="Japans finest", price=35).save()
+    c1 = Coffee(name="Icelands finest", price=5).save()
+    c2 = Coffee(name="Britains finest", price=10).save()
+    c3 = Coffee(name="Japans finest", price=35).save()
 
     assert Coffee.nodes.order_by('price').all()[0].price == 5
     assert Coffee.nodes.order_by('-price').all()[0].price == 35
@@ -213,6 +213,17 @@ def test_order_by():
     qb = QueryBuilder(ns).build_ast()
     assert qb._ast['with'] == 'coffee, rand() as r'
     assert qb._ast['order_by'] == 'r'
+
+    # Test order by on a relationship
+    l = Supplier(name="lidl2").save()
+    l.coffees.connect(c1)
+    l.coffees.connect(c2)
+    l.coffees.connect(c3)
+
+    ordered_n = [n for n in l.coffees.order_by('name').all()]
+    assert ordered_n[0] == c2
+    assert ordered_n[1] == c1
+    assert ordered_n[2] == c3
 
 
 def test_extra_filters():

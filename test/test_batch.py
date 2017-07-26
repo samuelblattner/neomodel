@@ -1,5 +1,28 @@
-from neomodel import (StructuredNode, StringProperty, IntegerProperty)
+from neomodel import (StructuredNode, StringProperty, IntegerProperty, UniqueIdProperty, RelationshipTo, RelationshipFrom)
 from neomodel.exception import UniqueProperty, DeflateError
+
+
+class UniqueUser(StructuredNode):
+    uid = UniqueIdProperty()
+    name = StringProperty()
+    age = IntegerProperty()
+
+
+def test_unique_id_property_batch():
+    users = UniqueUser.create(
+        {'name': 'bob', 'age': 2},
+        {'name': 'ben', 'age': 3}
+    )
+
+    assert users[0].uid != users[1].uid
+
+    users = UniqueUser.get_or_create(
+        {'uid': users[0].uid},
+        {'name': 'bill', 'age': 4}
+    )
+
+    assert users[0].name == 'bob'
+    assert users[1].uid
 
 
 class Customer(StructuredNode):
@@ -20,6 +43,7 @@ def test_batch_create():
     assert users[1].age == 7
     assert users[1].email == 'jim2@aol.com'
     assert Customer.nodes.get(email='jim1@aol.com')
+
 
 def test_batch_create_or_update():
     users = Customer.create_or_update(
@@ -73,3 +97,24 @@ def test_batch_index_violation():
 
     # not found
     assert not Customer.nodes.filter(email='jim7@aol.com')
+
+
+class Dog(StructuredNode):
+    name = StringProperty(required=True)
+    owner = RelationshipTo('Person', 'owner')
+
+
+class Person(StructuredNode):
+    name = StringProperty(unique_index=True)
+    pets = RelationshipFrom('Dog', 'owner')
+
+
+def test_get_or_create_with_rel():
+    bob = Person.get_or_create({"name": "Bob"})[0]
+    bobs_gizmo = Dog.get_or_create({"name": "Gizmo"}, relationship=bob.pets)
+
+    tim = Person.get_or_create({"name": "Tim"})[0]
+    tims_gizmo = Dog.get_or_create({"name": "Gizmo"}, relationship=tim.pets)
+
+    # not the same gizmo
+    assert bobs_gizmo[0] != tims_gizmo[0]

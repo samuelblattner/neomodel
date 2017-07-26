@@ -54,7 +54,7 @@ def _rel_helper(lhs, rhs, ident=None, relation_type=None, direction=None, relati
         stmt = stmt.format('[*]')
     else:
         # explicit relation_type
-        stmt = stmt.format('[%s:%s%s]' % (ident if ident else '', relation_type, rel_props))
+        stmt = stmt.format('[%s:`%s`%s]' % (ident if ident else '', relation_type, rel_props))
 
     return "({0}){1}({2})".format(lhs, stmt, rhs)
 
@@ -282,11 +282,12 @@ class QueryBuilder(object):
 
     def build_node(self, node):
         ident = node.__class__.__name__.lower()
-        if 'start' not in self._ast:
-            self._ast['start'] = []
-
         place_holder = self._register_place_holder(ident)
-        self._ast['start'].append('{} = node({{{}}})'.format(ident, place_holder))
+
+        # Hack to emulate START to lookup a node by id
+        _node_lookup = 'MATCH ({}) WHERE id({})={{{}}} WITH {}'.format(ident, ident, place_holder, ident)
+        self._ast['lookup'] = _node_lookup
+
         self._query_params[place_holder] = node.id
 
         self._ast['return'] = ident
@@ -307,25 +308,23 @@ class QueryBuilder(object):
         """
             handle additional matches supplied by 'has()' calls
         """
-        # TODO add support for labels
         source_ident = ident
 
         for key, value in node_set.must_match.items():
-            label = ':' + value['node_class'].__label__
             if isinstance(value, dict):
+                label = ':' + value['node_class'].__label__
                 stmt = _rel_helper(lhs=source_ident, rhs=label, ident='', **value)
                 self._ast['where'].append(stmt)
-            elif isinstance(value, tuple):
-                rel_manager, ns = value
-                self.add_node_set(ns, key)
+            else:
+                raise ValueError("Expecting dict got: " + repr(value))
 
         for key, val in node_set.dont_match.items():
-            label = ':' + val['node_class'].__label__
             if isinstance(val, dict):
+                label = ':' + val['node_class'].__label__
                 stmt = _rel_helper(lhs=source_ident, rhs=label, ident='', **val)
                 self._ast['where'].append('NOT ' + stmt)
             else:
-                raise ValueError("WTF? " + repr(val))
+                raise ValueError("Expecting dict got: " + repr(val))
 
     def _register_place_holder(self, key):
         if key in self._place_holder_registry:
@@ -363,9 +362,8 @@ class QueryBuilder(object):
     def build_query(self):
         query = ''
 
-        if 'start' in self._ast:
-            query += 'START '
-            query += ', '.join(self._ast['start'])
+        if 'lookup' in self._ast:
+            query += self._ast['lookup']
 
         query += ' MATCH '
         query += ', '.join(['({})'.format(i) for i in self._ast['match']])

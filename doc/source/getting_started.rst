@@ -28,7 +28,7 @@ Definition
 Below is a definition of two types of node `Person` and `Country`::
 
     from neomodel import (config, StructuredNode, StringProperty, IntegerProperty,
-        RelationshipTo, RelationshipFrom)
+        UniqueIdProperty, RelationshipTo, RelationshipFrom)
 
     config.DATABASE_URL = 'bolt://neo4j:password@localhost:7687'
 
@@ -40,6 +40,7 @@ Below is a definition of two types of node `Person` and `Country`::
 
 
     class Person(StructuredNode):
+        uid = UniqueIdProperty()
         name = StringProperty(unique_index=True)
         age = IntegerProperty(index=True, default=0)
 
@@ -55,6 +56,16 @@ if we don't want to specify a direction.
 
 Neomodel automatically creates a label for each StructuredNode class in the database
  with the corresponding indexes and constraints.
+
+Setup constraints and indexes
+=============================
+After creating node definitions in python, any constraints or indexes need to be added to Neo4j.
+
+Neomodel provides a script to automate this::
+
+    $ neomodel_install_labels yourapp.py someapp.models --db bolt://neo4j:neo4j@localhost:7687
+
+It is important to execute this after altering the schema. Keep an eye on the number of classes it detects each time.
 
 Create, Save, Delete
 ====================

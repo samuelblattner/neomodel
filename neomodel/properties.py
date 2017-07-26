@@ -1,25 +1,29 @@
 from .exception import InflateError, DeflateError, RequiredProperty
+from . import config
+
 from datetime import datetime, date
-import os
+from uuid import uuid4
 import re
 import types
 import pytz
 import json
 import sys
 import functools
-import logging
-logger = logging.getLogger(__name__)
+
 
 if sys.version_info >= (3, 0):
     unicode = lambda x: str(x)
+
 
 def display_for(key):
     def display_choice(self):
         return getattr(self.__class__, key).choice_map[getattr(self, key)]
     return display_choice
 
+
 class PropertyManager(object):
-    """Common stuff for handling properties in nodes and relationships"""
+    # Common methods for handling properties on node and relationship objects
+
     def __init__(self, *args, **kwargs):
 
         properties = getattr(self, "__all_properties__", None)
@@ -68,7 +72,7 @@ class PropertyManager(object):
 
     @classmethod
     def deflate(cls, obj_props, obj=None, skip_empty=False):
-        """ deflate dict ready to be stored """
+        # deflate dict ready to be stored
         deflated = {}
         for key, prop in cls.defined_properties(aliases=False, rels=False).items():
             # map property name to correct database property
@@ -90,7 +94,7 @@ class PropertyManager(object):
         for scls in reversed(cls.mro()):
             for key, prop in scls.__dict__.items():
                 if ((aliases and isinstance(prop, AliasProperty))
-                        or (properties and issubclass(prop.__class__, Property)
+                        or (properties and hasattr(prop, '__class__') and issubclass(prop.__class__, Property)
                             and not isinstance(prop, AliasProperty))
                         or (rels and isinstance(prop, RelationshipDefinition))):
                     props[key] = prop
@@ -107,21 +111,50 @@ def validator(fn):
         raise Exception("Unknown Property method " + fn_name)
 
     @functools.wraps(fn)
-    def validator(self, value, obj=None):
-        try:
+    def _validator(self, value, obj=None, rethrow=True):
+        if rethrow:
+            try:
+                return fn(self, value)
+            except Exception as e:
+                raise exc_class(self.name, self.owner, str(e), obj)
+        else:
+            # For using with ArrayProperty where we don't want an Inflate/Deflate error.
             return fn(self, value)
-        except Exception as e:
-            raise exc_class(self.name, self.owner, str(e), obj)
-    return validator
+
+    return _validator
 
 
 class Property(object):
-    def __init__(self, unique_index=False, index=False, required=False, default=None, db_property=None, **kwargs):
-        if (default != None) and required:
-            raise Exception("required and default are mutually exclusive")
+    """
+    Base class for object properties
+    """
+    form_field_class = 'CharField'
+
+    def __init__(self, unique_index=False, index=False, required=False, default=None,
+                 db_property=None, label=None, help_text=None, **kwargs):
+        """
+        Define a new property
+
+        :param unique_index: create unique index for this property
+        :type: bool
+        :param index: False
+        :type: bool
+        :param required: False
+        :type: bool
+        :param default: function or value
+        :param db_property: name of neo4j property it should map to
+        :type: str
+        :param label: Optional, used by Django
+        :type: str
+        :param help_text: Optional, used by Django
+        :type: str
+        :param kwargs:
+        """
+        if default is not None and required:
+            raise ValueError("required and default arguments are mutually exclusive")
 
         if unique_index and index:
-            raise Exception("unique_index and index are mutually exclusive")
+            raise ValueError("unique_index and index arguments are mutually exclusive")
 
         self.required = required
         self.unique_index = unique_index
@@ -129,8 +162,15 @@ class Property(object):
         self.default = default
         self.has_default = True if self.default is not None else False
         self.db_property = db_property  # define the name of the property in the database
+        self.label = label
+        self.help_text = help_text
 
     def default_value(self):
+        """
+        Generate a default value
+
+        :return: the value
+        """
         if self.has_default:
             if hasattr(self.default, '__call__'):
                 return self.default()
@@ -146,8 +186,9 @@ class Property(object):
 
 class NormalProperty(Property):
     """
-    Base class for Normalized properties - those that use the same normalization
-    method to inflate or deflate.
+    Base class for Normalized properties
+
+    Those that use the same normalization method to inflate or deflate.
     """
 
     @validator
@@ -167,17 +208,20 @@ class NormalProperty(Property):
 
 
 class RegexProperty(NormalProperty):
-    """Validates a normal property using a regular expression."""
+    """
+    Validates a property against a regular expression.
+
+    If sub-classing set:
+
+        expression = r'[^@]+@[^@]+\.[^@]+'
+    """
+    form_field_class = 'RegexField'
 
     expression = None
-    """Can be overriden in subclasses.
-
-    This helps quickly defining your own expression in case you want
-    to extend :py:class:`RegexProperty`.
-    """
 
     def __init__(self, expression=None, **kwargs):
-        """Initializes new property with an expression.
+        """
+        Initializes new property with an expression.
 
         :param str expression: regular expression validating this property
         """
@@ -200,35 +244,44 @@ class RegexProperty(NormalProperty):
 
 
 class EmailProperty(RegexProperty):
-    """Suitable for email addresses."""
-
+    """
+    Store email addresses
+    """
+    form_field_class = 'EmailField'
     expression = r'[^@]+@[^@]+\.[^@]+'
 
 
 class StringProperty(Property):
-    def __init__(self, **kwargs):
+    """
+    Store strings
+    """
+    def __init__(self, choices=None, **kwargs):
+        """
+        :param choices: tuple of tuple pairs.
+        :type: tuple
+        :param kwargs:
+        """
         super(StringProperty, self).__init__(**kwargs)
-        self.choices = kwargs.get('choices', None)
+        self.choices = choices
 
         if self.choices:
             if not isinstance(self.choices, tuple):
                 raise ValueError("Choices must be a tuple of tuples")
 
             self.choice_map = dict(self.choices)
+            self.form_field_class = 'TypedChoiceField'
 
     @validator
     def inflate(self, value):
         if self.choices and value not in self.choice_map:
-            raise ValueError("Invalid choice {} not in {}".format(
-                value, ', '.join(self.choice_map.keys())))
+            raise ValueError("Invalid choice {}".format(value))
 
         return unicode(value)
 
     @validator
     def deflate(self, value):
         if self.choices and value not in self.choice_map:
-            raise ValueError("Invalid choice {} not in {}".format(
-                value, ','.join(self.choice_map.keys())))
+            raise ValueError("Invalid choice {}".format(value))
 
         return unicode(value)
 
@@ -237,6 +290,11 @@ class StringProperty(Property):
 
 
 class IntegerProperty(Property):
+    """
+    Stores an Integer value
+    """
+    form_field_class = 'IntegerField'
+
     @validator
     def inflate(self, value):
         return int(value)
@@ -250,12 +308,46 @@ class IntegerProperty(Property):
 
 
 class ArrayProperty(Property):
+    """
+    Stores a list of items
+    """
+
+    def __init__(self, base_property=None, **kwargs):
+        """
+        Store a list of values, optionally of a specific type.
+
+        :param base_property: List item type e.g StringProperty for string
+        :type: Property
+        """
+
+        # list item type
+        if base_property is not None:
+            if not isinstance(base_property, Property):
+                raise TypeError('Expecting neomodel Property')
+
+            if isinstance(base_property, ArrayProperty):
+                raise TypeError('Cannot have nested ArrayProperty')
+
+            for ilegal_attr in ['default', 'index', 'unique_index', 'required']:
+                if getattr(base_property, ilegal_attr, None):
+                    raise ValueError('ArrayProperty base_property cannot have "{}" set'.format(ilegal_attr))
+
+        self.base_property = base_property
+
+        super(ArrayProperty, self).__init__(**kwargs)
+
     @validator
     def inflate(self, value):
+        if self.base_property:
+            return [self.base_property.inflate(item, rethrow=False) for item in value]
+
         return list(value)
 
     @validator
     def deflate(self, value):
+        if self.base_property:
+            return [self.base_property.deflate(item, rethrow=False) for item in value]
+
         return list(value)
 
     def default_value(self):
@@ -263,6 +355,11 @@ class ArrayProperty(Property):
 
 
 class FloatProperty(Property):
+    """
+    Store a floating point value
+    """
+    form_field_class = 'FloatField'
+
     @validator
     def inflate(self, value):
         return float(value)
@@ -276,6 +373,11 @@ class FloatProperty(Property):
 
 
 class BooleanProperty(Property):
+    """
+    Stores a boolean value
+    """
+    form_field_class = 'BooleanField'
+
     @validator
     def inflate(self, value):
         return bool(value)
@@ -289,6 +391,11 @@ class BooleanProperty(Property):
 
 
 class DateProperty(Property):
+    """
+    Stores a date
+    """
+    form_field_class = 'DateField'
+
     @validator
     def inflate(self, value):
         return datetime.strptime(unicode(value), "%Y-%m-%d").date()
@@ -302,29 +409,22 @@ class DateProperty(Property):
 
 
 class DateTimeProperty(Property):
+    form_field_class = 'DateTimeField'
 
-    def __init__(self, **kwargs):
-        """Initializes new date time property accessor.
-
-        :param bool default_now: indicates whether default should be
-        current date and time
-
-        If you pass `default_now` and `default` at same time,
-        `ValueError` will be thrown.
-
+    def __init__(self, default_now=False, **kwargs):
         """
-        super(DateTimeProperty, self).__init__(
-            **self.__patch_default(kwargs)
-        )
+        Store a datetime.
 
-    def __patch_default(self, kwargs):
-        default_now = kwargs.get('default_now', False)
+        Serialises to unix epoch.
+
+        :param bool default_now: default current date and time
+        """
         if default_now:
             if 'default' in kwargs:
                 raise ValueError('too many defaults')
-            kwargs['default'] = lambda: \
-                datetime.utcnow().replace(tzinfo=pytz.utc)
-        return kwargs
+            kwargs['default'] = lambda: datetime.utcnow().replace(tzinfo=pytz.utc)
+
+        super(DateTimeProperty, self).__init__(**kwargs)
 
     @validator
     def inflate(self, value):
@@ -336,22 +436,25 @@ class DateTimeProperty(Property):
 
     @validator
     def deflate(self, value):
-        #: Fixed timestamp strftime following suggestion from
-        # http://stackoverflow.com/questions/11743019/convert-python-datetime-to-epoch-with-strftime
         if not isinstance(value, datetime):
             raise ValueError('datetime object expected, got {0}'.format(value))
         if value.tzinfo:
             value = value.astimezone(pytz.utc)
             epoch_date = datetime(1970, 1, 1, tzinfo=pytz.utc)
-        elif os.environ.get('NEOMODEL_FORCE_TIMEZONE', False):
+        elif config.FORCE_TIMEZONE:
             raise ValueError("Error deflating {} no timezone provided".format(value))
         else:
-            logger.warning("No timezone sepecified on datetime object.. will be inflated to UTC")
+            # No timezone specified on datetime object.. assuming UTC
             epoch_date = datetime(1970, 1, 1)
         return float((value - epoch_date).total_seconds())
 
 
 class JSONProperty(Property):
+    """
+    Store a data structure as a JSON string.
+
+    The structure will be inflated when a node is retrieved.
+    """
     def __init__(self, *args, **kwargs):
         super(JSONProperty, self).__init__(*args, **kwargs)
 
@@ -365,7 +468,16 @@ class JSONProperty(Property):
 
 
 class AliasProperty(property, Property):
+    """
+    Alias another existing property
+    """
     def __init__(self, to=None):
+        """
+        Create new alias
+
+        :param to: name of property aliasing
+        :type: str
+        """
         self.target = to
         self.required = False
         self.has_default = False
@@ -386,3 +498,25 @@ class AliasProperty(property, Property):
     @property
     def unique_index(self):
         return getattr(self.owner, self.aliased_to()).unique_index
+
+
+class UniqueIdProperty(Property):
+    """
+    A unique identifier, a randomly generated uid (uuid4) with a unique index
+    """
+    def __init__(self, **kwargs):
+        for item in ['required', 'unique_index', 'index', 'default']:
+            if item in kwargs:
+                raise ValueError('{} argument ignored by {}'.format(item, self.__class__.__name__))
+
+        kwargs['unique_index'] = True
+        kwargs['default'] = lambda: uuid4().hex
+        super(UniqueIdProperty, self).__init__(**kwargs)
+
+    @validator
+    def inflate(self, value):
+        return unicode(value)
+
+    @validator
+    def deflate(self, value):
+        return unicode(value)

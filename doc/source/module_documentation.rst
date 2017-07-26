@@ -1,10 +1,30 @@
+====================
 Module documentation
 ====================
 
+Core
+----
 .. automodule:: neomodel.core
   :members:
 
+Properties
+----------
+.. automodule:: neomodel.properties
+  :members:
 
+Relationships
+-------------
+.. automodule:: neomodel.relationship
+  :members:
+
+.. automodule:: neomodel.relationship_manager
+  :members:
+
+.. automodule:: neomodel.cardinality
+  :members:
+
+Match
+-----
 .. module:: neomodel.match
 .. autoclass:: neomodel.match.BaseSet
    :members:
@@ -16,6 +36,3 @@ Module documentation
    :members:
    :undoc-members:
 
-
-.. automodule:: neomodel.cardinality
-  :members:

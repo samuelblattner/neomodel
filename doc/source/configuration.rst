@@ -3,25 +3,34 @@ Configuration
 
 Covering the neomodel 'config' module and its variables.
 
-Database url
-------------
+Database
+--------
 
 Set your connection details::
 
     config.DATABASE_URL = 'bolt://neo4j:neo4j@localhost:7687`
 
-Disable automatic index and constraint creation
------------------------------------------------
+Disable encrypted connection (usefult for development::
 
-After a StructuredNode class definition neomodel installs the corresponding constraints and indexes at compile time.
-This can be annoying for unit testing and may result in deadlocks when used with gunicorn.
+    config.ENCRYPTED_CONNECTION = False
 
-You can disable this feature by setting the follow var (prior to loading your class definitions)::
+Adjust connection pool size::
+
+    config.MAX_POOL_SIZE = 50  # default
+
+Enable automatic index and constraint creation
+----------------------------------------------
+
+After a StructuredNode definition neomodel can install the corresponding constraints and indexes at compile time.
+However this method is only recommended for testing::
 
     from neomodel import config
-    config.AUTO_INSTALL_LABELS = False
+    # before loading your node definitions
+    config.AUTO_INSTALL_LABELS = True
 
-If you wish to manually install a nodes indexes and constraints you may do it on a per class basis::
+Neomodel provides a script `neomodel_install_labels` for the task, however if you want to handle this manually see below.
+
+Install indexes and constraints for a single class::
 
     from neomodel import install_labels
     install_labels(YourClass)
@@ -34,8 +43,13 @@ Or for your entire 'schema' ::
     install_all_labels()
     # Output:
     # Setting up labels and constraints...
+    # Found yourapp.models.User
     # + Creating unique constraint for name on label User for class yourapp.models.User
-    # yourapp.models.User done.
+    # ...
 
-You may want to build this into your deployment mechanism.
+Require timezones on DateTimeProperty
+-------------------------------------
 
+Ensure all DateTimes are provided with a timezone before being serialised to UTC epoch::
+
+    config.FORCE_TIMEZONE = True  # default False

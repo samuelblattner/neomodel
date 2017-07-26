@@ -2,8 +2,7 @@
 Relationships
 =============
 
-Directionless relationships, first argument the class second the neo4j relationship.
-NOTE: in order to be compatible with neomodel these types must only contain alpha numeric characters and underscores::
+Directionless relationships, first argument the class second the neo4j relationship::
 
     class Person(StructuredNode):
         friends = Relationship('Person', 'FRIEND')
@@ -28,7 +27,7 @@ Remember this needs to be declared on both sides of the definition::
 
 The following cardinality classes are available::
 
-    ZeroOMore (default), OneOrMore, ZeroOrOne, One
+    ZeroOrMore (default), OneOrMore, ZeroOrOne, One
 
 If cardinality is broken by existing data a *CardinalityViolation* exception is raised.
 On attempting to break a cardinality restriction a *AttemptedCardinalityViolation* is raised.

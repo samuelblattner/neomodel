@@ -6,7 +6,6 @@ from neomodel.exception import RequiredProperty, UniqueProperty
 class User(StructuredNode):
     email = StringProperty(unique_index=True, required=True)
     age = IntegerProperty(index=True)
-    aliases = ArrayProperty()
 
     @property
     def email_alias(self):
@@ -17,13 +16,18 @@ class User(StructuredNode):
         self.email = value
 
 
-def test_array_properties():
-    user = User(email='foo@bar.com', aliases=['Tim', 'Bob']).save()
-    assert user
-    assert 'Tim' in user.aliases
-    user = User.nodes.get(email='foo@bar.com')
-    assert user
-    assert 'Tim' in user.aliases
+def test_issue_233():
+    class BaseIssue233(StructuredNode):
+        __abstract_node__ = True
+
+        def __getitem__(self, item):
+            return self.__dict__[item]
+
+    class Issue233(BaseIssue233):
+        uid = StringProperty(unique_index=True, required=True)
+
+    i = Issue233(uid='testgetitem').save()
+    assert i['uid'] == 'testgetitem'
 
 
 def test_issue_72():
@@ -59,6 +63,7 @@ def test_get_and_get_or_none():
 
     n = User.nodes.get_or_none(email='robin@nothere.com')
     assert n is None
+
 
 def test_save_to_model():
     u = User(email='jim@test.com', age=3)
