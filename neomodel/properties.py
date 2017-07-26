@@ -1,3 +1,6 @@
+from enum import Enum
+from typing import Type
+
 from .exception import InflateError, DeflateError, RequiredProperty
 from . import config
 
@@ -520,3 +523,21 @@ class UniqueIdProperty(Property):
     @validator
     def deflate(self, value):
         return unicode(value)
+
+
+class EnumProperty(Property):
+
+    enum_type: Type[Enum] = None
+
+    def __init__(self, enum_type: Type[Enum], **kwargs):
+        self.enum_type = enum_type
+        super(EnumProperty, self).__init__(**kwargs)
+
+    def inflate(self, value, obj):
+        try:
+            return self.enum_type[value]
+        except KeyError:
+            return None
+
+    def deflate(self, value: Enum, obj):
+        return value.name
