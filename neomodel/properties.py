@@ -533,11 +533,11 @@ class EnumProperty(Property):
         self.enum_type = enum_type
         super(EnumProperty, self).__init__(**kwargs)
 
-    def inflate(self, value, obj):
+    def inflate(self, value, obj=None):
         try:
             return self.enum_type[value]
         except KeyError:
             return None
 
-    def deflate(self, value: Enum, obj):
+    def deflate(self, value: Enum, obj=None):
         return value.name
