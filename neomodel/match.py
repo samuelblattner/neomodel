@@ -240,6 +240,9 @@ class QueryBuilder(object):
             if source.filters:
                 self.build_where_stmt(ident, source.filters)
 
+            if source.prefetch_relations:
+                self.build_prefetch_stmt(ident, source.prefetch_relations)
+
             return ident
         elif isinstance(source, StructuredNode):
             return self.build_node(source)
@@ -359,7 +362,19 @@ class QueryBuilder(object):
 
         self._ast['where'].append(' AND '.join(stmts))
 
-    def build_query(self):
+    def build_prefetch_stmt(self, ident, prefetches):
+        stmts = []
+
+        for field in prefetches:
+            stmts.append('OPTIONAL MATCH ({})-[:{}*]->({})'.format(
+                ident,
+                field[1],
+                field[0]
+            ))
+
+        self._ast['optional'] = ' '.join(stmts)
+
+    def build_query(self, omit_optional=False):
         query = ''
 
         if 'lookup' in self._ast:
@@ -372,11 +387,18 @@ class QueryBuilder(object):
             query += ' WHERE '
             query += ' AND '.join(self._ast['where'])
 
+        if 'optional' in self._ast and self._ast['optional'] and not omit_optional:
+            query += ' ' + self._ast['optional']
+
         if 'with' in self._ast and self._ast['with']:
             query += ' WITH '
             query += self._ast['with']
 
-        query += ' RETURN ' + self._ast['return']
+        query += ' RETURN ' + self._ast['return'] + (
+            '{}{}'.format(
+                ',',
+                ','.join([field[0] for field in self.node_set.prefetch_relations])
+            ) if hasattr(self.node_set, 'prefetch_relations') and len(self.node_set.prefetch_relations) > 0 and not omit_optional else '')
 
         if 'order_by' in self._ast and self._ast['order_by']:
             query += ' ORDER BY '
@@ -394,7 +416,7 @@ class QueryBuilder(object):
         self._ast['return'] = 'count({})'.format(self._ast['return'])
         # drop order_by, results in an invalid query
         self._ast.pop('order_by', None)
-        query = self.build_query()
+        query = self.build_query(omit_optional=True)
         results, _ = db.cypher_query(query, self._query_params)
         return int(results[0][0])
 
@@ -409,8 +431,31 @@ class QueryBuilder(object):
     def _execute(self):
         query = self.build_query()
         results, _ = db.cypher_query(query, self._query_params)
+        instances = []
+        result_class = self._ast['result_class']
+
         if results:
-            return [self._ast['result_class'].inflate(n[0]) for n in results]
+
+            cur_instance_id = None
+            instance = None
+
+            if 'optional' in self._ast and self._ast['optional']:
+                for row in results:
+                    if cur_instance_id != row[0].id:
+                        instance = result_class.inflate(row[0])
+                        cur_instance_id = row[0].id
+                        instances.append(instance)
+
+                    for f, field in enumerate(self.node_set.prefetch_relations):
+                        field = getattr(instance, field[0])
+                        if not hasattr(field, '_cached'):
+                            field._cached = []
+                        field._cached.append(field.definition['node_class'].inflate(row[f + 1]))
+
+            else:
+                instances = [result_class.inflate(n[0]) for n in results]
+            return instances
+
         return []
 
 
@@ -488,6 +533,7 @@ class NodeSet(BaseSet):
         install_traversals(self.source_class, self)
 
         self.filters = []
+        self.prefetch_relations = []
 
         # used by has()
         self.must_match = {}
@@ -610,6 +656,18 @@ class NodeSet(BaseSet):
 
                 self._order_by.append(prop + (' DESC' if desc else ''))
 
+        return self
+
+    def prefetch_related(self, *related_fields):
+        """
+        Preloads related fields as OPTIONAL MATCHES
+        :param related_fields:
+        :return:
+        """
+        self.prefetch_relations += [
+            (relfield, getattr(self.source_class, relfield).definition['relation_type'])
+            for relfield in related_fields if hasattr(self.source_class, relfield)
+        ]
         return self
 
 
